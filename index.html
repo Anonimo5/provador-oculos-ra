@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Provador de Óculos RA - Protótipo</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #canvas-container { position: relative; width: 100vw; height: 100vh; }
+        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        /* Espelhar o vídeo para parecer um espelho */
+        video { transform: scaleX(-1); }
+        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 20px; z-index: 10; }
+    </style>
+
+    <!-- Carregando as Bibliotecas Necessárias via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="loading">Carregando câmera e modelos de IA...</div>
+    <div id="canvas-container">
+        <video id="webcam" autoplay playsinline></video>
+        <div id="three-container" style="position: absolute; width: 100%; height: 100%;"></div>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const loadingElement = document.getElementById('loading');
+        const threeContainer = document.getElementById('three-container');
+
+        let scene, camera, renderer, glasses;
+        let faceMesh;
+
+        // 1. Inicializar o Cenário 3D (Three.js)
+        function initThree() {
+            scene = new THREE.Scene();
+
+            // Câmera com campo de visão adequado para Webcams
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            threeContainer.appendChild(renderer.domElement);
+
+            // Criar um "óculos" temporário (um bloco vermelho estilizado)
+            // Na versão final, aqui você vai carregar seu arquivo .gltf / .obj
+            const geometry = new THREE.BoxGeometry(0.6, 0.15, 0.4); 
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: false });
+            glasses = new THREE.Mesh(geometry, material);
+            scene.add(glasses);
+
+            // Luz básica
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            // Posicionar câmera no centro
+            camera.position.z = 2;
+        }
+
+        // 2. Processar os pontos do rosto que o MediaPipe encontrar
+        function onResults(results) {
+            if (loadingElement) loadingElement.style.display = 'none';
+
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                const landmarks = results.multiFaceLandmarks[0];
+
+                // Ponto 168 é o centro da ponte do nariz (entre os olhos)
+                const noseBridge = landmarks[168]; 
+                
+                // Ponto 33 e 263 são os cantos externos dos olhos (para calcular a rotação e tamanho)
+                const leftEye = landmarks[33];
+                const rightEye = landmarks[263];
+
+                // Converter coordenadas normalizadas da IA (0 a 1) para o espaço 3D do Three.js
+                // Como espelhamos o vídeo na tela, invertemos o eixo X aqui também
+                const x = -(noseBridge.x - 0.5) * 2; 
+                const y = -(noseBridge.y - 0.5) * 1.5; 
+                const z = -noseBridge.z * 2; // Profundidade
+
+                // Atualizar posição do óculos virtual
+                glasses.position.set(x, y, z);
+
+                // Calcular a rotação inclinando o óculos com base nos olhos
+                const eyeWidth = Math.sqrt(Math.pow(rightEye.x - leftEye.x, 2) + Math.pow(rightEye.y - leftEye.y, 2));
+                const roll = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+                
+                glasses.rotation.z = -roll; // Rotação no eixo Z (inclinação da cabeça)
+
+                // Ajustar dinamicamente o tamanho do óculos se você chegar mais perto ou longe da câmera
+                const baseScale = 4.5;
+                glasses.scale.set(eyeWidth * baseScale, eyeWidth * baseScale, eyeWidth * baseScale);
+                
+                glasses.visible = true;
+            } else {
+                glasses.visible = false; // Esconde se não achar nenhum rosto
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        // 3. Configurar a IA do MediaPipe Face Mesh
+        function initFaceMesh() {
+            faceMesh = new FaceMesh({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+            });
+
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true, // Garante precisão extra nos olhos e lábios
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            faceMesh.onResults(onResults);
+
+            // Iniciar a câmera nativa do navegador
+            const cameraUtils = new Camera(videoElement, {
+                onFrame: async () => {
+                    await faceMesh.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            cameraUtils.start();
+        }
+
+        // Ajustar tela caso o usuário mude o tamanho do navegador
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Rodar tudo
+        initThree();
+        initFaceMesh();
+    </script>
+</body>
+</html>
