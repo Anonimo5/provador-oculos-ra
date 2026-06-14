@@ -5,11 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Provador Virtual de Óculos</title>
     
-    <!-- Bibliotecas do MediaPipe para Rastreamento Facial -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/facemesh/facemesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     
-    <!-- Bibliotecas do Three.js para Renderização 3D -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 
@@ -30,7 +28,6 @@
             height: 100%;
         }
 
-        /* Vídeo da câmera espelhado para parecer um espelho real */
         video {
             position: absolute;
             width: 100%;
@@ -39,14 +36,13 @@
             transform: scaleX(-1);
         }
 
-        /* Canvas do Three.js por cima do vídeo */
         canvas {
             position: absolute;
             width: 100%;
             height: 100%;
             top: 0;
             left: 0;
-            pointer-events: none; /* Permite clicar através do 3D se necessário */
+            pointer-events: none;
         }
 
         #loading {
@@ -67,7 +63,7 @@
 <body>
 
     <div id="container">
-        <div id="loading">Carregando câmera e modelo 3D...</div>
+        <div id="loading">A iniciar o provador...</div>
         <video id="webcam" autoplay playsinline></video>
         <div id="three-container"></div>
     </div>
@@ -80,70 +76,59 @@
         let scene, camera, renderer, glassesGroup;
         let faceMesh;
 
-        // 1. Inicializa o cenário 3D do Three.js
+        // 1. Configuração do Cenário 3D
         function initThree() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             
             renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
-            
-            // Ativa o mapeamento de cores correto para modelos vindos do Vectary
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             renderer.outputEncoding = THREE.sRGBEncoding;
             threeContainer.appendChild(renderer.domElement);
 
-            // Grupo que vai carregar o óculos e se mover junto com o rosto
             glassesGroup = new THREE.Group();
             scene.add(glassesGroup);
 
-            // Carregador do arquivo 3D (.glb)
+            // Carregar o modelo 3D ajustado
             const loader = new THREE.GLTFLoader();
             loader.load('oculos.glb', function (gltf) {
                 const model = gltf.scene;
                 
-                // --- REDE DE SEGURANÇA MATEMÁTICA ---
-                // Centraliza o ponto de pivô no meio exato da ponte do óculos
+                // Normalização de pivô e tamanho (Garante o encaixe automático)
                 const box = new THREE.Box3().setFromObject(model);
                 const center = new THREE.Vector3();
                 box.getCenter(center);
                 model.position.sub(center); 
                 
-                // Mede o tamanho real que o arquivo veio e força uma escala padrão de 1 unidade
                 const size = new THREE.Vector3();
                 box.getSize(size);
                 const maxDim = Math.max(size.x, size.y, size.z);
                 const scale = 1.0 / maxDim;
                 model.scale.set(scale, scale, scale);
                 
-                // Adiciona o óculos tratado ao grupo de rastreamento
                 glassesGroup.add(model);
                 
                 if (loadingElement) loadingElement.style.display = 'none';
-                console.log("Óculos carregado e normalizado com sucesso!");
+                console.log("Modelo 3D injetado com sucesso.");
             }, undefined, function (error) {
-                console.error("Erro crítico ao carregar o arquivo oculos.glb:", error);
+                console.error("Erro ao ler o ficheiro oculos.glb:", error);
             });
 
-            // --- SISTEMA DE ILUMINAÇÃO REFORÇADA (Evita óculos preto) ---
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+            // Iluminação Ambiente e Direcional
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.3);
             scene.add(ambientLight);
 
-            const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
-            mainLight.position.set(0, 5, 5);
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            mainLight.position.set(0, 4, 4);
             scene.add(mainLight);
-
-            const backLight = new THREE.DirectionalLight(0xffffff, 1.0);
-            backLight.position.set(0, -5, -5);
-            scene.add(backLight);
 
             camera.position.z = 2;
         }
 
-        // 2. Processa o rastreamento facial do MediaPipe e posiciona o 3D
+        // 2. Cálculo de Posicionamento e Rastreamento
         function onResults(results) {
             if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-                // Se nenhum rosto for visto, esconde o óculos para não ficar flutuando solto
                 glassesGroup.visible = false;
                 return;
             }
@@ -151,56 +136,51 @@
             glassesGroup.visible = true;
             const landmarks = results.multiFaceLandmarks[0];
 
-            // Pontos de referência importantes do rosto
-            const noseBridge = landmarks[168]; // Centro entre os olhos (onde apoia o óculos)
-            const leftEye = landmarks[33];     // Canto externo do olho esquerdo
-            const rightEye = landmarks[263];    // Canto externo do olho direito
+            // Definição dos marcos faciais estáveis
+            const noseBridge = landmarks[168]; 
+            const leftEye = landmarks[33];     
+            const rightEye = landmarks[263];    
 
-            // Posição: Converte as coordenadas 2D da imagem para o espaço 3D do Three.js
-            // Multiplicamos por -1 no eixo X por conta do espelhamento da câmera
+            // Conversão de coordenadas para o plano do Three.js
             const posX = -(noseBridge.x - 0.5) * 1.5;
             const posY = -(noseBridge.y - 0.5) * 1.5;
             const posZ = -noseBridge.z * 2.0; 
 
             glassesGroup.position.set(posX, posY, posZ);
 
-            // Escala Dinâmica: Calcula a largura do rosto usando a distância entre os olhos
+            // Escala proporcional à distância entre os olhos
             const eyeWidth = Math.sqrt(
                 Math.pow(rightEye.x - leftEye.x, 2) + 
                 Math.pow(rightEye.y - leftEye.y, 2)
             );
             
-            // Multiplicador de escala (Ajuste para 4.0 se achar que ficou pequeno no rosto)
-            const scaleFactor = eyeWidth * 3.5; 
+            // Fator multiplicador ideal para o tamanho do rosto
+            const scaleFactor = eyeWidth * 3.8; 
             glassesGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-            // Rotação: Calcula o ângulo de inclinação da cabeça baseado na linha dos olhos
+            // Rotação em tempo real nos eixos Z e Y
             const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
-            glassesGroup.rotation.z = angle; // Inclinação lateral (torcer a cabeça)
-            
-            // Pequena compensação de rotação de profundidade baseada nos eixos
+            glassesGroup.rotation.z = angle; 
             glassesGroup.rotation.y = -(rightEye.z - leftEye.z) * 2;
 
-            // Renderiza o frame atualizado
             renderer.render(scene, camera);
         }
 
-        // 3. Inicializa o MediaPipe FaceMesh
+        // 3. Inicialização correta do FaceMesh
         function initMediaPipe() {
             faceMesh = new FaceMesh({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/facemesh/${file}`
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
             });
 
             faceMesh.setOptions({
                 maxNumFaces: 1,
                 refineLandmarks: true,
-                minDetectionConfidence: 0.5,
-                minTrackingConfidence: 0.5
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
             });
 
             faceMesh.onResults(onResults);
 
-            // Inicia o fluxo de captura da webcam do usuário
             const cameraUtils = new Camera(videoElement, {
                 onFrame: async () => {
                     await faceMesh.send({ image: videoElement });
@@ -212,14 +192,12 @@
             cameraUtils.start();
         }
 
-        // Atualiza a janela se o usuário virar o celular de lado
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // Inicialização Geral do Sistema ao carregar a página
         initThree();
         initMediaPipe();
     </script>
