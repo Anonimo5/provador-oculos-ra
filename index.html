@@ -95,28 +95,29 @@
             loader.load('oculos.glb', function (gltf) {
                 const model = gltf.scene;
                 
-                // Força o ponto central geométrico do óculos para o meio da ponte do nariz
+                // FORÇA O ALINHAMENTO DO CENTRO DO ÓCULOS
                 const box = new THREE.Box3().setFromObject(model);
                 const center = new THREE.Vector3();
                 box.getCenter(center);
                 model.position.sub(center); 
                 
-                // Normaliza o tamanho do arquivo para evitar escalas gigantes
+                // MEDE E CLASSIFICA O TAMANHO REAL DO ARQUIVO
                 const size = new THREE.Vector3();
                 box.getSize(size);
-                const maxDim = Math.max(size.x, size.y, size.z);
-                const scale = 1.0 / maxDim;
+                
+                // Normaliza o óculos para ter exatamente 1 unidade de largura (eixo X)
+                const scale = 1.0 / size.x;
                 model.scale.set(scale, scale, scale);
                 
                 glassesGroup.add(model);
                 
                 if (loadingElement) loadingElement.style.display = 'none';
-                console.log("Modelo 3D injetado com sucesso.");
+                console.log("Óculos recalibrado com sucesso.");
             }, undefined, function (error) {
                 console.error("Erro ao ler o ficheiro oculos.glb:", error);
             });
 
-            // Luz ambiente e direcional balanceadas
+            // Iluminação
             const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
             scene.add(ambientLight);
 
@@ -127,7 +128,7 @@
             camera.position.z = 2;
         }
 
-        // 2. Cálculo de Posicionamento e Rastreamento Autônomo
+        // 2. Cálculo Estrito de Posicionamento e Alinhamento Realista
         function onResults(results) {
             if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
                 glassesGroup.visible = false;
@@ -137,37 +138,40 @@
             glassesGroup.visible = true;
             const landmarks = results.multiFaceLandmarks[0];
 
-            // Ponto 168 é o osso do nariz (glabela/ponte)
+            // Ponto 168 é o osso estável do nariz (ponte/glabela)
             const noseBridge = landmarks[168]; 
             const leftEye = landmarks[33];     
             const rightEye = landmarks[263];    
 
-            // Alinhamento exato nos eixos de projeção do Three.js
+            // Transposição milimétrica para o plano tridimensional
             const posX = -(noseBridge.x - 0.5) * 1.5;
-            
-            // Reajustado o fator Y para trazer o óculos da testa diretamente para o centro dos olhos/nariz
-            const posY = -(noseBridge.y - 0.5) * 1.5 - 0.04; 
-            
+            const posY = -(noseBridge.y - 0.5) * 1.5; 
             const posZ = -noseBridge.z * 2.0; 
 
             glassesGroup.position.set(posX, posY, posZ);
 
-            // Escala Proporcional Automática baseada no tamanho real da face detectada
+            // ESCALA REALISTA: Baseada na distância exata entre os olhos
             const eyeWidth = Math.sqrt(
                 Math.pow(rightEye.x - leftEye.x, 2) + 
                 Math.pow(rightEye.y - leftEye.y, 2)
             );
             
-            // Diminuído o multiplicador de 3.8 para 1.35 para reduzir o tamanho gigante do óculos
-            const scaleFactor = eyeWidth * 1.35; 
+            // Fator calibrado baseado na normalização por largura (size.x). 
+            // Multiplicador entre 1.1 e 1.35 garante a proporção humana real na face.
+            const scaleFactor = eyeWidth * 1.25; 
             glassesGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-            // Rotação autônoma baseada na inclinação dos olhos
+            // ROTAÇÃO CORRIGIDA E TRAVADA:
+            // Alinha de forma reta horizontalmente usando o ângulo dos olhos
             const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
             glassesGroup.rotation.z = angle; 
             
-            // Corrigido o giro Y para que as hastes apontem para trás e as lentes fiquem na frente
-            glassesGroup.rotation.y = -(rightEye.z - leftEye.z) * 2 + Math.PI;
+            // Corrige a rotação Y para manter as lentes olhando para frente, apontando hastes para trás
+            glassesGroup.rotation.y = -(rightEye.z - leftEye.z) * 2;
+            
+            // FORÇA MANUAL DA ROTAÇÃO BASE DO MODELO:
+            // Zera qualquer desvio para garantir que fique reto
+            glassesGroup.rotation.x = 0; 
 
             renderer.render(scene, camera);
         }
