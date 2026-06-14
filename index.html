@@ -3,111 +3,192 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Provador de Óculos RA - Realístico</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
-        #canvas-container { position: relative; width: 100vw; height: 100vh; }
-        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        video { transform: scaleX(-1); }
-        #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 20px; z-index: 10; font-family: sans-serif; }
-    </style>
-
-    <!-- Bibliotecas -->
+    <title>Provador Virtual de Óculos</title>
+    
+    <!-- Bibliotecas do MediaPipe para Rastreamento Facial -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/facemesh/facemesh.js" crossorigin="anonymous"></script>
+    
+    <!-- Bibliotecas do Three.js para Renderização 3D -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <!-- NOVO: Adicionado o importador de arquivos GLTF/GLB -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
+        }
+
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Vídeo da câmera espelhado para parecer um espelho real */
+        video {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+
+        /* Canvas do Three.js por cima do vídeo */
+        canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none; /* Permite clicar através do 3D se necessário */
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px 25px;
+            border-radius: 20px;
+            font-size: 16px;
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
 </head>
 <body>
 
-    <div id="loading">Carregando óculos 3D e câmera...</div>
-    <div id="canvas-container">
+    <div id="container">
+        <div id="loading">Carregando câmera e modelo 3D...</div>
         <video id="webcam" autoplay playsinline></video>
         <div id="three-container"></div>
     </div>
 
     <script>
         const videoElement = document.getElementById('webcam');
-        const loadingElement = document.getElementById('loading');
         const threeContainer = document.getElementById('three-container');
+        const loadingElement = document.getElementById('loading');
 
         let scene, camera, renderer, glassesGroup;
         let faceMesh;
 
+        // 1. Inicializa o cenário 3D do Three.js
         function initThree() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
             
             renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            
+            // Ativa o mapeamento de cores correto para modelos vindos do Vectary
+            renderer.outputEncoding = THREE.sRGBEncoding;
             threeContainer.appendChild(renderer.domElement);
 
-            // Criamos um grupo vazio onde o óculos importado vai ficar dentro
+            // Grupo que vai carregar o óculos e se mover junto com o rosto
             glassesGroup = new THREE.Group();
             scene.add(glassesGroup);
 
-            // Importando o modelo 3D real
+            // Carregador do arquivo 3D (.glb)
             const loader = new THREE.GLTFLoader();
-            // Substitua 'oculos.glb' pelo nome exato do arquivo que você colocar no seu GitHub
             loader.load('oculos.glb', function (gltf) {
                 const model = gltf.scene;
                 
-                // Ajustes de pivô e rotação padrão do arquivo (pode variar dependendo de como o modelo foi desenhado)
-                model.position.set(0, 0, 0); 
+                // --- REDE DE SEGURANÇA MATEMÁTICA ---
+                // Centraliza o ponto de pivô no meio exato da ponte do óculos
+                const box = new THREE.Box3().setFromObject(model);
+                const center = new THREE.Vector3();
+                box.getCenter(center);
+                model.position.sub(center); 
                 
+                // Mede o tamanho real que o arquivo veio e força uma escala padrão de 1 unidade
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 1.0 / maxDim;
+                model.scale.set(scale, scale, scale);
+                
+                // Adiciona o óculos tratado ao grupo de rastreamento
                 glassesGroup.add(model);
+                
                 if (loadingElement) loadingElement.style.display = 'none';
+                console.log("Óculos carregado e normalizado com sucesso!");
             }, undefined, function (error) {
-                console.error("Erro ao carregar o óculos 3D:", error);
+                console.error("Erro crítico ao carregar o arquivo oculos.glb:", error);
             });
 
-            // Luzes mais fortes para dar realismo ao material do óculos (metal, reflexos, etc.)
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            // --- SISTEMA DE ILUMINAÇÃO REFORÇADA (Evita óculos preto) ---
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
             scene.add(ambientLight);
 
-            const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            dirLight.position.set(0, 5, 5);
-            scene.add(dirLight);
+            const mainLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            mainLight.position.set(0, 5, 5);
+            scene.add(mainLight);
+
+            const backLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            backLight.position.set(0, -5, -5);
+            scene.add(backLight);
 
             camera.position.z = 2;
         }
 
+        // 2. Processa o rastreamento facial do MediaPipe e posiciona o 3D
         function onResults(results) {
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                const landmarks = results.multiFaceLandmarks[0];
-
-                const noseBridge = landmarks[168]; // Ponte do nariz
-                const leftEye = landmarks[33];
-                const rightEye = landmarks[263];
-
-                const x = -(noseBridge.x - 0.5) * 2; 
-                const y = -(noseBridge.y - 0.5) * 1.5; 
-                const z = -noseBridge.z * 2; 
-
-                // Move o grupo do óculos inteiro
-                glassesGroup.position.set(x, y, z);
-
-                // Rotação Z (inclinação lateral da cabeça)
-                const roll = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
-                glassesGroup.rotation.z = -roll;
-
-                // ESCALA DINÂMICA: Ajuste o multiplicador final (ex: 3.5) até que o óculos encaixe perfeitamente no seu rosto
-                const eyeWidth = Math.sqrt(Math.pow(rightEye.x - leftEye.x, 2) + Math.pow(rightEye.y - leftEye.y, 2));
-                const scaleFactor = eyeWidth * 3.5; 
-                glassesGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-                
-                glassesGroup.visible = true;
-            } else {
+            if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+                // Se nenhum rosto for visto, esconde o óculos para não ficar flutuando solto
                 glassesGroup.visible = false;
+                return;
             }
 
+            glassesGroup.visible = true;
+            const landmarks = results.multiFaceLandmarks[0];
+
+            // Pontos de referência importantes do rosto
+            const noseBridge = landmarks[168]; // Centro entre os olhos (onde apoia o óculos)
+            const leftEye = landmarks[33];     // Canto externo do olho esquerdo
+            const rightEye = landmarks[263];    // Canto externo do olho direito
+
+            // Posição: Converte as coordenadas 2D da imagem para o espaço 3D do Three.js
+            // Multiplicamos por -1 no eixo X por conta do espelhamento da câmera
+            const posX = -(noseBridge.x - 0.5) * 1.5;
+            const posY = -(noseBridge.y - 0.5) * 1.5;
+            const posZ = -noseBridge.z * 2.0; 
+
+            glassesGroup.position.set(posX, posY, posZ);
+
+            // Escala Dinâmica: Calcula a largura do rosto usando a distância entre os olhos
+            const eyeWidth = Math.sqrt(
+                Math.pow(rightEye.x - leftEye.x, 2) + 
+                Math.pow(rightEye.y - leftEye.y, 2)
+            );
+            
+            // Multiplicador de escala (Ajuste para 4.0 se achar que ficou pequeno no rosto)
+            const scaleFactor = eyeWidth * 3.5; 
+            glassesGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+            // Rotação: Calcula o ângulo de inclinação da cabeça baseado na linha dos olhos
+            const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+            glassesGroup.rotation.z = angle; // Inclinação lateral (torcer a cabeça)
+            
+            // Pequena compensação de rotação de profundidade baseada nos eixos
+            glassesGroup.rotation.y = -(rightEye.z - leftEye.z) * 2;
+
+            // Renderiza o frame atualizado
             renderer.render(scene, camera);
         }
 
-        function initFaceMesh() {
+        // 3. Inicializa o MediaPipe FaceMesh
+        function initMediaPipe() {
             faceMesh = new FaceMesh({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/facemesh/${file}`
             });
 
             faceMesh.setOptions({
@@ -119,22 +200,28 @@
 
             faceMesh.onResults(onResults);
 
+            // Inicia o fluxo de captura da webcam do usuário
             const cameraUtils = new Camera(videoElement, {
-                onFrame: async () => { await faceMesh.send({ image: videoElement }); },
+                onFrame: async () => {
+                    await faceMesh.send({ image: videoElement });
+                },
                 width: 640,
                 height: 480
             });
+            
             cameraUtils.start();
         }
 
+        // Atualiza a janela se o usuário virar o celular de lado
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
+        // Inicialização Geral do Sistema ao carregar a página
         initThree();
-        initFaceMesh();
+        initMediaPipe();
     </script>
 </body>
 </html>
