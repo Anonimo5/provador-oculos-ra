@@ -76,7 +76,6 @@
         let scene, camera, renderer, glassesGroup, glassesModel;
         let faceMesh;
 
-        // 1. Configuração do Cenário 3D
         function initThree() {
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -87,40 +86,34 @@
             renderer.outputEncoding = THREE.sRGBEncoding;
             threeContainer.appendChild(renderer.domElement);
 
-            // Grupo âncora principal que receberá a posição exata do nariz
             glassesGroup = new THREE.Group();
             scene.add(glassesGroup);
 
-            // Carregar o modelo 3D
             const loader = new THREE.GLTFLoader();
             loader.load('oculos.glb', function (gltf) {
                 glassesModel = gltf.scene;
                 
-                // RESET TOTAL DE ESCALA E ANCORAGEM INTERNA
+                // Força o ponto central geométrico (pivô) no centro perfeito do arquivo 3D
                 const box = new THREE.Box3().setFromObject(glassesModel);
                 const center = new THREE.Vector3();
                 box.getCenter(center);
-                
-                // Move a malha de forma a forçar o ponto (0,0,0) exatamente no meio das lentes
                 glassesModel.position.sub(center); 
                 
-                // Normalização por volume para evitar tamanhos gigantes
+                // Normaliza o tamanho com base na largura frontal do óculos (eixo X)
                 const size = new THREE.Vector3();
                 box.getSize(size);
-                const maxDim = Math.max(size.x, size.y, size.z);
-                const scale = 1.0 / maxDim;
+                const scale = 1.0 / size.x; 
                 glassesModel.scale.set(scale, scale, scale);
                 
-                // Adiciona o modelo normalizado ao grupo de rastreamento
                 glassesGroup.add(glassesModel);
                 
                 if (loadingElement) loadingElement.style.display = 'none';
-                console.log("Óculos recalibrado.");
+                console.log("Óculos carregado e normalizado.");
             }, undefined, function (error) {
-                console.error("Erro ao ler o ficheiro oculos.glb:", error);
+                console.error("Erro ao carregar oculos.glb:", error);
             });
 
-            // Iluminação
+            // Luzes para dar reflexo e brilho realista no óculos do Vectary
             const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
             scene.add(ambientLight);
 
@@ -131,7 +124,7 @@
             camera.position.z = 2;
         }
 
-        // 2. Rastreamento e Alinhamento no Osso do Nariz (Ponto 168)
+        // 2. Rastreamento Avançado usando o eixo dos Olhos/Pupilas
         function onResults(results) {
             if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0 || !glassesModel) {
                 glassesGroup.visible = false;
@@ -141,47 +134,56 @@
             glassesGroup.visible = true;
             const landmarks = results.multiFaceLandmarks[0];
 
-            // Ponto 168 é o osso estável do nariz (glabela/ponte)
-            const noseBridge = landmarks[168]; 
-            const leftEye = landmarks[33];     
-            const rightEye = landmarks[263];    
+            // Rastreamento estrito dos centros dos olhos (marcadores estáveis equivalentes às pupilas)
+            const leftEyeCenter = landmarks[468];  
+            const rightEyeCenter = landmarks[473]; 
+            const noseBridge = landmarks[168];
 
-            // Transposição para o plano do Three.js baseada no ponto do nariz
-            const posX = -(noseBridge.x - 0.5) * 1.5;
-            const posY = -(noseBridge.y - 0.5) * 1.5; 
-            const posZ = -noseBridge.z * 2.0; 
+            // 1. CALCULA O CENTRO PERFEITO ENTRE OS DOIS OLHOS
+            const midX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
+            const midY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
+            const midZ = (leftEyeCenter.z + rightEyeCenter.z) / 2;
 
-            // Aplica a posição diretamente na raiz do grupo
+            // Transpõe os dados de rastreamento para o espaço 3D
+            const posX = -(midX - 0.5) * 1.5;
+            
+            // Usamos a altura média dos olhos e adicionamos uma leve compensação (-0.02) 
+            // para o óculos descer milimetricamente e assentar no osso do nariz
+            const posY = -(midY - 0.5) * 1.5 - 0.02; 
+            
+            const posZ = -midZ * 2.0; 
+
             glassesGroup.position.set(posX, posY, posZ);
 
-            // ESCALA REALISTA: Baseia-se na distância entre os olhos na imagem
-            const eyeWidth = Math.sqrt(
-                Math.pow(rightEye.x - leftEye.x, 2) + 
-                Math.pow(rightEye.y - leftEye.y, 2)
+            // 2. ESCALA DINÂMICA (Largura proporcional à distância entre as pupilas)
+            const pupilDistance = Math.sqrt(
+                Math.pow(rightEyeCenter.x - leftEyeCenter.x, 2) + 
+                Math.pow(rightEyeCenter.y - leftEyeCenter.y, 2)
             );
             
-            // Multiplicador estrito para simular o tamanho de um óculos real na face
-            const scaleFactor = eyeWidth * 1.7; 
+            // Multiplicador exato para cobrir a face de ponta a ponta sem ficar gigante
+            const scaleFactor = pupilDistance * 2.1; 
             glassesGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-            // ROTAÇÃO DE FRENTE COMPENSADA (Trava o modelo reto)
-            const angle = Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x);
+            // 3. ROTAÇÃO TRAVADA DE FRENTE
+            // Calcula a inclinação lateral da cabeça com base na linha dos olhos
+            const angle = Math.atan2(rightEyeCenter.y - leftEyeCenter.y, rightEyeCenter.x - leftEyeCenter.x);
             
-            // Zerra os eixos conflituosos e força o óculos reto olhando para a tela
+            // Garante que o óculos não incline para frente ou vire de lado incorretamente
             glassesGroup.rotation.x = 0.0;
             glassesGroup.rotation.y = 0.0;
-            glassesGroup.rotation.z = angle; // Segue apenas a inclinação lateral da cabeça
+            glassesGroup.rotation.z = angle; 
 
-            // Se o arquivo original do Vectary estiver virado de lado por padrão na raiz,
-            // esta linha abaixo força uma rotação local fixa de 90 graus no Y interno para consertar
-            glassesModel.rotation.y = Math.PI / 2;
-            glassesModel.rotation.x = 0;
-            glassesModel.rotation.z = 0;
+            // ALINHAMENTO DO ARQUIVO DO VECTARY
+            // Se o óculos persistir em carregar de lado devido à exportação original,
+            // altere o valor abaixo de "0.0" para "Math.PI / 2" para girá-lo de frente.
+            glassesModel.rotation.y = 0.0; 
+            glassesModel.rotation.x = 0.0;
+            glassesModel.rotation.z = 0.0;
 
             renderer.render(scene, camera);
         }
 
-        // 3. Inicialização do FaceMesh
         function initMediaPipe() {
             faceMesh = new FaceMesh({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
@@ -189,8 +191,8 @@
 
             faceMesh.setOptions({
                 maxNumFaces: 1,
-                refineLandmarks: true,
-                minDetectionConfidence: 0.7, // Aumentado para maior precisão de rastreamento
+                refineLandmarks: true, // Ativa explicitamente os pontos detalhados das pupilas (468 a 477)
+                minDetectionConfidence: 0.7,
                 minTrackingConfidence: 0.7
             });
 
